@@ -1,3 +1,19 @@
+diamond (3.4.378-ui2) unstable; urgency=medium
+
+  * Last Commit: (2014-05-05 08:15:11 -0700)
+    68862af986dcec7e190edaf826f5c22b58410bb0 Rob Smith
+    <kormoc@gmail.com>
+
+ -- cronix <cronix@cronix-work.united.domain>  Tue, 06 May 2014 12:31:04 +0200
+
+diamond (3.4.378-ui1) unstable; urgency=medium
+
+  * Last Commit: (2014-05-05 08:15:11 -0700)
+    68862af986dcec7e190edaf826f5c22b58410bb0 Rob Smith
+    <kormoc@gmail.com>
+
+ -- cronix <cronix@cronix-work.united.domain>  Tue, 06 May 2014 11:48:14 +0200
+
 diamond (3.1.0) unstable; urgency=low
   * new upstream
  -- Rob Smith <kormoc@gmail.com>  Tue, 05 Nov 2012 15:19:00 -0800

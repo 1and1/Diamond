@@ -158,9 +158,9 @@ class MemcachedCollector(diamond.collector.Collector):
 
                     # we have it
                     if stat in self.GAUGES:
-                        self.publish_gauge(alias + "." + stat, stats[stat])
+                        self.publish_gauge(port + "." + stat, stats[stat])
                     else:
-                        self.publish_counter(alias + "." + stat, stats[stat])
+                        self.publish_counter(port + "." + stat, stats[stat])
 
                 else:
 
