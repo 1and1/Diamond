@@ -21,19 +21,29 @@ except ImportError:
 
 
 class PostgresqlCollector(diamond.collector.Collector):
+    """
+    PostgreSQL collector class
+    """
 
     def get_default_config_help(self):
+        """
+        Return help text for collector
+        """
         config_help = super(PostgresqlCollector, self).get_default_config_help()
         config_help.update({
             'host': 'Hostname',
+            'dbname': 'DB to connect to in order to get list of DBs in PgSQL',
             'user': 'Username',
             'password': 'Password',
             'port': 'Port number',
+            'sslmode': 'Whether to use SSL - <disable|allow|require|...>',
             'underscore': 'Convert _ to .',
             'extended': 'Enable collection of extended database stats.',
             'metrics': 'List of enabled metrics to collect',
-            'pg_version':
-            "The version of postgres that you'll be monitoring eg in format 9.2"
+            'pg_version': "The version of postgres that you'll be monitoring"
+            " eg. in format 9.2",
+            'has_admin': 'Admin privileges are required to execute some'
+            ' queries.',
         })
         return config_help
 
@@ -45,31 +55,42 @@ class PostgresqlCollector(diamond.collector.Collector):
         config.update({
             'path': 'postgres',
             'host': 'localhost',
+            'dbname': 'postgres',
             'user': 'postgres',
             'password': 'postgres',
             'port': 5432,
+            'sslmode': 'disable',
             'underscore': False,
             'extended': False,
             'method': 'Threaded',
             'metrics': [],
-            'pg_version': 9.2
+            'pg_version': 9.2,
+            'has_admin': True,
         })
         return config
 
     def collect(self):
+        """
+        Do pre-flight checks, get list of db names, collect metrics, publish
+        """
         if psycopg2 is None:
             self.log.error('Unable to import module psycopg2')
             return {}
 
-        # Create database-specific connections
-        self.connections = {}
-        for db in self._get_db_names():
-            self.connections[db] = self._connect(database=db)
+        # Get list of databases
+        dbs = self._get_db_names()
+        if len(dbs) == 0:
+            self.log.error("I have 0 databases!")
+            return {}
 
         if self.config['metrics']:
             metrics = self.config['metrics']
         elif str_to_bool(self.config['extended']):
             metrics = registry['extended']
+            if str_to_bool(self.config['has_admin']) \
+                    and 'WalSegmentStats' not in metrics:
+                metrics.append('WalSegmentStats')
+
         else:
             metrics = registry['basic']
 
@@ -77,23 +98,36 @@ class PostgresqlCollector(diamond.collector.Collector):
         for metric_name in set(metrics):
             if metric_name not in metrics_registry:
                 continue
-            klass = metrics_registry[metric_name]
-            stat = klass(self.connections, underscore=self.config['underscore'])
-            stat.fetch(self.config['pg_version'])
-            for metric, value in stat:
-                if value is not None:
-                    self.publish(metric, value)
 
-        # Cleanup
-        [conn.close() for conn in self.connections.itervalues()]
+            for dbase in dbs:
+                conn = self._connect(database=dbase)
+                klass = metrics_registry[metric_name]
+                stat = klass(dbase, conn,
+                             underscore=self.config['underscore'])
+                stat.fetch(self.config['pg_version'])
+                for metric, value in stat:
+                    if value is not None:
+                        self.publish(metric, value)
+
+                # Setting multi_db to True will run this query on all known
+                # databases. This is bad for queries that hit views like
+                # pg_database, which are shared across databases.
+                #
+                # If multi_db is False, bail early after the first query
+                # iteration. Otherwise, continue to remaining databases.
+                if stat.multi_db is False:
+                    break
 
     def _get_db_names(self):
+        """
+        Try to get a list of db names
+        """
         query = """
             SELECT datname FROM pg_database
             WHERE datallowconn AND NOT datistemplate
             AND NOT datname='postgres' ORDER BY 1
         """
-        conn = self._connect()
+        conn = self._connect(self.config['dbname'])
         cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
         cursor.execute(query)
         datnames = [d['datname'] for d in cursor.fetchall()]
@@ -103,14 +137,19 @@ class PostgresqlCollector(diamond.collector.Collector):
         # only database available (required for querying pg_stat_database)
         if not datnames:
             datnames = ['postgres']
+
         return datnames
 
     def _connect(self, database=None):
+        """
+        Connect to given database
+        """
         conn_args = {
             'host': self.config['host'],
             'user': self.config['user'],
             'password': self.config['password'],
-            'port': self.config['port']
+            'port': self.config['port'],
+            'sslmode': self.config['sslmode'],
         }
 
         if database:
@@ -126,65 +165,63 @@ class PostgresqlCollector(diamond.collector.Collector):
 
 
 class QueryStats(object):
-    def __init__(self, conns, parameters=None, underscore=False):
-        self.connections = conns
+    query = None
+    path = None
+
+    def __init__(self, dbname, conn, parameters=None, underscore=False):
+        self.conn = conn
+        self.dbname = dbname
         self.underscore = underscore
         self.parameters = parameters
-
-    def _translate_datname(self, db):
-        if self.underscore:
-            db = db.replace("_", ".")
-        return db
-
-    def fetch(self, pg_version):
         self.data = list()
 
-        for db, conn in self.connections.iteritems():
-            cursor = conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
-            if float(pg_version) >= 9.2:
-                pid = 'pid'
-                query = 'query'
-            else:
-                pid = 'procpid'
-                query = 'current_query'
-            q = self.query.format(pid=pid, query=query)
-            cursor.execute(q, self.parameters)
+    def _translate_datname(self, datname):
+        """
+        Replace '_' with '.'
+        """
+        if self.underscore:
+            datname = datname.replace("_", ".")
+        return datname
 
-            for row in cursor.fetchall():
-                # If row is length 2, assume col1, col2 forms key: value
-                if len(row) == 2:
+    def fetch(self, pg_version):
+        cursor = self.conn.cursor(cursor_factory=psycopg2.extras.DictCursor)
+        if float(pg_version) >= 9.2 and hasattr(self, 'post_92_query'):
+            q = self.post_92_query
+        else:
+            q = self.query
+
+        cursor.execute(q, self.parameters)
+        rows = cursor.fetchall()
+        for row in rows:
+            # If row is length 2, assume col1, col2 forms key: value
+            if len(row) == 2:
+                self.data.append({
+                    'datname': self._translate_datname(self.dbname),
+                    'metric': row[0],
+                    'value': row[1],
+                })
+
+            # If row > length 2, assume each column name maps to
+            # key => value
+            else:
+                for key, value in row.iteritems():
+                    if key in ('datname', 'schemaname', 'relname',
+                               'indexrelname',):
+                        continue
+
                     self.data.append({
-                        'datname': self._translate_datname(db),
-                        'metric': row[0],
-                        'value': row[1],
+                        'datname': self._translate_datname(row.get(
+                            'datname', self.dbname)),
+                        'schemaname': row.get('schemaname', None),
+                        'relname': row.get('relname', None),
+                        'indexrelname': row.get('indexrelname', None),
+                        'metric': key,
+                        'value': value,
                     })
 
-                # If row > length 2, assume each column name maps to
-                # key => value
-                else:
-                    for key, value in row.iteritems():
-                        if key in ('datname', 'schemaname', 'relname',
-                                   'indexrelname',):
-                            continue
-
-                        self.data.append({
-                            'datname': self._translate_datname(row.get(
-                                'datname', db)),
-                            'schemaname': row.get('schemaname', None),
-                            'relname': row.get('relname', None),
-                            'indexrelname': row.get('indexrelname', None),
-                            'metric': key,
-                            'value': value,
-                        })
-
-            # Setting multi_db to True will run this query on all known
-            # databases. This is bad for queries that hit views like
-            # pg_database, which are shared across databases.
-            #
-            # If multi_db is False, bail early after the first query
-            # iteration. Otherwise, continue to remaining databases.
-            if not self.multi_db:
-                break
+        # Clean up
+        cursor.close()
+        self.conn.close()
 
     def __iter__(self):
         for data_point in self.data:
@@ -197,7 +234,7 @@ class DatabaseStats(QueryStats):
     """
     path = "database.%(datname)s.%(metric)s"
     multi_db = False
-    query = """
+    post_92_query = """
         SELECT pg_stat_database.datname as datname,
                pg_stat_database.numbackends as numbackends,
                pg_stat_database.xact_commit as xact_commit,
@@ -216,6 +253,8 @@ class DatabaseStats(QueryStats):
         WHERE pg_stat_database.datname
         NOT IN ('template0','template1','postgres')
     """
+    query = post_92_query.replace('pg_stat_database.temp_files as temp_files,', '').replace(
+                                  'pg_stat_database.temp_bytes as temp_bytes,', '')
 
 
 class UserTableStats(QueryStats):
@@ -294,24 +333,25 @@ class ConnectionStateStats(QueryStats):
                 ) AS tmp(state)
         LEFT JOIN
              (SELECT CASE WHEN waiting THEN 'waiting'
-                          WHEN {query} = '<IDLE>' THEN 'idle'
-                          WHEN {query} = '<IDLE> in transaction'
+                          WHEN current_query = '<IDLE>' THEN 'idle'
+                          WHEN current_query = '<IDLE> in transaction'
                               THEN 'idletransaction'
-                          WHEN {query} = '<insufficient privilege>'
+                          WHEN current_query = '<insufficient privilege>'
                               THEN 'unknown'
                           ELSE 'active' END AS state,
                      count(*) AS count
                FROM pg_stat_activity
-               WHERE {pid} != pg_backend_pid()
+               WHERE procpid != pg_backend_pid()
                GROUP BY CASE WHEN waiting THEN 'waiting'
-                             WHEN {query} = '<IDLE>' THEN 'idle'
-                             WHEN {query} = '<IDLE> in transaction'
+                             WHEN current_query = '<IDLE>' THEN 'idle'
+                             WHEN current_query = '<IDLE> in transaction'
                                  THEN 'idletransaction'
-                             WHEN {query} = '<insufficient privilege>'
+                             WHEN current_query = '<insufficient privilege>'
                                  THEN 'unknown' ELSE 'active' END
              ) AS tmp2
         ON tmp.state=tmp2.state ORDER BY 1
     """
+    post_92_query = query.replace('procpid', 'pid').replace('current_query', 'query')
 
 
 class LockStats(QueryStats):
@@ -390,9 +430,10 @@ class IdleInTransactions(QueryStats):
                max(COALESCE(ROUND(EXTRACT(epoch FROM now()-query_start)),0))
                    AS idle_in_transaction
         FROM pg_stat_activity
-        WHERE {query} = '<IDLE> in transaction'
+        WHERE current_query = '<IDLE> in transaction'
         GROUP BY 1
     """
+    post_92_query = query.replace('current_query', 'query')
 
 
 class LongestRunningQueries(QueryStats):
@@ -402,13 +443,14 @@ class LongestRunningQueries(QueryStats):
         SELECT 'query',
             COALESCE(max(extract(epoch FROM CURRENT_TIMESTAMP-query_start)),0)
         FROM pg_stat_activity
-        WHERE {query} NOT LIKE '<IDLE%'
+        WHERE current_query NOT LIKE '<IDLE%'
         UNION ALL
         SELECT 'transaction',
             COALESCE(max(extract(epoch FROM CURRENT_TIMESTAMP-xact_start)),0)
         FROM pg_stat_activity
         WHERE 1=1
     """
+    post_92_query = query.replace('current_query', 'query')
 
 
 class UserConnectionCount(QueryStats):
@@ -418,10 +460,11 @@ class UserConnectionCount(QueryStats):
         SELECT usename,
                count(*) as count
         FROM pg_stat_activity
-        WHERE {pid} != pg_backend_pid()
+        WHERE procpid != pg_backend_pid()
         GROUP BY usename
         ORDER BY 1
     """
+    post_92_query = query.replace('procpid', 'pid')
 
 
 class DatabaseConnectionCount(QueryStats):
@@ -481,11 +524,11 @@ metrics_registry = {
 }
 
 registry = {
-    'basic': (
+    'basic': [
         'DatabaseStats',
         'DatabaseConnectionCount',
-    ),
-    'extended': (
+    ],
+    'extended': [
         'DatabaseStats',
         'DatabaseConnectionCount',
         'UserTableStats',
@@ -496,12 +539,11 @@ registry = {
         'LockStats',
         'RelationSizeStats',
         'BackgroundWriterStats',
-        'WalSegmentStats',
         'TransactionCount',
         'IdleInTransactions',
         'LongestRunningQueries',
         'UserConnectionCount',
         'TableScanStats',
         'TupleAccessStats',
-    ),
+    ],
 }

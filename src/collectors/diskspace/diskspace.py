@@ -55,7 +55,7 @@ class DiskSpaceCollector(diamond.collector.Collector):
             'path': 'diskspace',
             # filesystems to examine
             'filesystems': 'ext2, ext3, ext4, xfs, glusterfs, nfs, ntfs, hfs,'
-            + ' fat32, fat16',
+            + ' fat32, fat16, btrfs',
 
             # exclude_filters
             #   A list of regex patterns
@@ -207,7 +207,11 @@ class DiskSpaceCollector(diamond.collector.Collector):
                     name = 'root'
 
             if hasattr(os, 'statvfs'):  # POSIX
-                data = os.statvfs(info['mount_point'])
+                try:
+                    data = os.statvfs(info['mount_point'])
+                except OSError, e:
+                    self.log.exception(e)
+                    continue
 
                 block_size = data.f_bsize
 
