@@ -39,16 +39,22 @@ def get_hostname(config, method=None):
     if 'hostname' in config and method != 'shell':
         return config['hostname']
 
-
     if method in get_hostname.cached_results:
         return get_hostname.cached_results[method]
 
     if method == 'shell':
         if 'hostname' not in config:
             raise DiamondException(
-                    "hostname must be set to a shell command for hostname_method=shell")
+                "hostname must be set to a shell command for"
+                " hostname_method=shell")
         else:
-            hostname = subprocess.check_output(config['hostname'], shell=True).strip()
+            proc = subprocess.Popen(config['hostname'],
+                                    shell=True,
+                                    stdout=subprocess.PIPE)
+            hostname = proc.communicate()[0].strip()
+            if proc.returncode != 0:
+                raise subprocess.CalledProcessError(proc.returncode,
+                                                    config['hostname'])
             get_hostname.cached_results[method] = hostname
             return hostname
 
@@ -64,11 +70,15 @@ def get_hostname(config, method=None):
     if method == 'fqdn_short':
         hostname = socket.getfqdn().split('.')[0]
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'fqdn':
         hostname = socket.getfqdn().replace('.', '_')
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'fqdn_rev':
@@ -76,11 +86,15 @@ def get_hostname(config, method=None):
         hostname.reverse()
         hostname = '.'.join(hostname)
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'uname_short':
         hostname = os.uname()[1].split('.')[0]
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'uname_rev':
@@ -88,16 +102,22 @@ def get_hostname(config, method=None):
         hostname.reverse()
         hostname = '.'.join(hostname)
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'hostname':
         hostname = socket.gethostname()
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'hostname_short':
         hostname = socket.gethostname().split('.')[0]
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'hostname_rev':
@@ -105,6 +125,8 @@ def get_hostname(config, method=None):
         hostname.reverse()
         hostname = '.'.join(hostname)
         get_hostname.cached_results[method] = hostname
+        if hostname == '':
+            raise DiamondException('Hostname is empty?!')
         return hostname
 
     if method == 'none':
@@ -265,7 +287,7 @@ class Collector(object):
             # Collect the collector run time in ms
             'measure_collector_time': False,
 
-            # Whitelist of metrics to let th rough
+            # Whitelist of metrics to let through
             'metrics_whitelist': None,
 
             # Blacklist of metrics to let through
@@ -520,3 +542,44 @@ class Collector(object):
                     return filename
 
         return binary
+
+
+class ProcessCollector(Collector):
+    """
+    Collector with helpers for handling running commands with/without sudo
+    """
+
+    def get_default_config_help(self):
+        config_help = super(ProcessCollector, self).get_default_config_help()
+        config_help.update({
+            'use_sudo':     'Use sudo?',
+            'sudo_cmd':     'Path to sudo',
+        })
+        return config_help
+
+    def get_default_config(self):
+        """
+        Returns the default collector settings
+        """
+        config = super(ProcessCollector, self).get_default_config()
+        config.update({
+            'use_sudo':     False,
+            'sudo_cmd':     self.find_binary('/usr/bin/sudo'),
+        })
+        return config
+
+    def run_command(self, args):
+        if 'bin' not in self.config:
+            raise Exception('config does not have any binary configured')
+        try:
+            command = args
+            command.insert(0, self.config['bin'])
+
+            if str_to_bool(self.config['use_sudo']):
+                command.insert(0, self.config['sudo_cmd'])
+
+            return subprocess.Popen(command,
+                                    stdout=subprocess.PIPE).communicate()
+        except OSError:
+            self.log.exception("Unable to run %s", command)
+            return None

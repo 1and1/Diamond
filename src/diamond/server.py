@@ -51,10 +51,15 @@ class Server(object):
         try:
                 for cfgfile in os.listdir(config['configs']['path']):
                     if cfgfile.endswith(config['configs']['extension']):
-                        newconfig = configobj.ConfigObj(config['configs']['path'] + cfgfile)
+                        newconfig = configobj.ConfigObj(
+                            config['configs']['path'] + cfgfile)
                         config.merge(newconfig)
         except KeyError:
                 pass
+
+        if 'server' not in config:
+            raise Exception('Failed to reload config file %s!' % configfile)
+
         self.config = config
 
     def load_handler(self, fqcn):
@@ -197,7 +202,15 @@ class Server(object):
                     try:
                         # Import the module
                         mod = __import__(modname, globals(), locals(), ['*'])
-                    except (ImportError, SyntaxError):
+                    except (KeyboardInterrupt, SystemExit) as err:
+                        self.log.error(
+                            "System or keyboard interrupt "
+                            "while loading module %s"
+                            % modname)
+                        if isinstance(err, SystemExit):
+                            sys.exit(err.code)
+                        raise KeyboardInterrupt
+                    except:
                         # Log error
                         self.log.error("Failed to import module: %s. %s",
                                        modname,
@@ -319,14 +332,14 @@ class Server(object):
         # Set Running Flag
         self.running = True
 
+        # Load config
+        self.load_config()
+
         # Load handlers
         if 'handlers_path' in self.config['server']:
             handlers_path = self.config['server']['handlers_path']
             self.load_include_path([handlers_path])
         self.load_handlers()
-
-        # Load config
-        self.load_config()
 
         # Load collectors
 

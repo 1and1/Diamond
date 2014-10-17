@@ -253,8 +253,11 @@ class DatabaseStats(QueryStats):
         WHERE pg_stat_database.datname
         NOT IN ('template0','template1','postgres')
     """
-    query = post_92_query.replace('pg_stat_database.temp_files as temp_files,', '').replace(
-                                  'pg_stat_database.temp_bytes as temp_bytes,', '')
+    query = post_92_query.replace(
+        'pg_stat_database.temp_files as temp_files,',
+        '').replace(
+        'pg_stat_database.temp_bytes as temp_bytes,',
+        '')
 
 
 class UserTableStats(QueryStats):
@@ -351,7 +354,8 @@ class ConnectionStateStats(QueryStats):
              ) AS tmp2
         ON tmp.state=tmp2.state ORDER BY 1
     """
-    post_92_query = query.replace('procpid', 'pid').replace('current_query', 'query')
+    post_92_query = query.replace('procpid', 'pid').replace('current_query',
+                                                            'query')
 
 
 class LockStats(QueryStats):
@@ -503,6 +507,24 @@ class TupleAccessStats(QueryStats):
     """
 
 
+class DatabaseReplicationStats(QueryStats):
+    path = "database.replication.%(metric)s"
+    multi_db = False
+    query = """
+        SELECT EXTRACT(epoch FROM
+            current_timestamp - pg_last_xact_replay_timestamp()) as replay_lag
+    """
+
+
+class DatabaseXidAge(QueryStats):
+    path = "%(datname)s.datfrozenxid.%(metric)s"
+    multi_db = False
+    query = """
+        SELECT datname, age(datfrozenxid) AS age
+        FROM pg_database WHERE datallowconn = TRUE
+    """
+
+
 metrics_registry = {
     'DatabaseStats': DatabaseStats,
     'DatabaseConnectionCount': DatabaseConnectionCount,
@@ -521,6 +543,8 @@ metrics_registry = {
     'UserConnectionCount': UserConnectionCount,
     'TableScanStats': TableScanStats,
     'TupleAccessStats': TupleAccessStats,
+    'DatabaseReplicationStats': DatabaseReplicationStats,
+    'DatabaseXidAge': DatabaseXidAge,
 }
 
 registry = {
@@ -531,6 +555,8 @@ registry = {
     'extended': [
         'DatabaseStats',
         'DatabaseConnectionCount',
+        'DatabaseReplicationStats',
+        'DatabaseXidAge',
         'UserTableStats',
         'UserIndexStats',
         'UserTableIOStats',
