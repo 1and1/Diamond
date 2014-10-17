@@ -17,6 +17,7 @@ Diffrences to Upstream
 =====
 
  * Memcached collector has no alias anymore instead the port of the memcached instance is added to the graphite path
+ * New ceph Pool collector
 
 
 Success Stories
