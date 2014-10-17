@@ -13,6 +13,12 @@ convenience the wiki is setup as a submodule of this checkout. You can get it vi
     git submodule init
     git submodule update
 
+Diffrences to Upstream
+=====
+
+ * Memcached collector has no alias anymore instead the port of the memcached instance is added to the graphite path
+
+
 Success Stories
 =====
 

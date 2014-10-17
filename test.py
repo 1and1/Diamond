@@ -101,13 +101,18 @@ class CollectorTestCase(unittest.TestCase):
             return False
         return True
 
+    def getFixtureDirPath(self):
+        path = os.path.join(
+            os.path.dirname(inspect.getfile(self.__class__)),
+            'fixtures')
+        return path
+
     def getFixturePath(self, fixture_name):
-        file = os.path.join(os.path.dirname(inspect.getfile(self.__class__)),
-                            'fixtures',
+        path = os.path.join(self.getFixtureDirPath(),
                             fixture_name)
-        if not os.access(file, os.R_OK):
-            print "Missing Fixture " + file
-        return file
+        if not os.access(path, os.R_OK):
+            print "Missing Fixture " + path
+        return path
 
     def getFixture(self, fixture_name):
         try:
@@ -116,6 +121,12 @@ class CollectorTestCase(unittest.TestCase):
             return data
         finally:
             f.close()
+
+    def getFixtures(self):
+        fixtures = []
+        for root, dirnames, filenames in os.walk(self.getFixtureDirPath()):
+            fixtures.append(os.path.join(root, dirnames, filenames))
+        return fixtures
 
     def getPickledResults(self, results_name):
         try:
