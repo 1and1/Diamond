@@ -1,4 +1,4 @@
-#!/usr/local/rnt/bin/python
+#!/usr/bin/env python
 # coding=utf-8
 """
 This class collects data on NUMA utilization
@@ -9,7 +9,6 @@ This class collects data on NUMA utilization
 
 """
 import diamond.collector
-from time import sleep
 from subprocess import Popen, PIPE
 from re import compile as re_compile
 import logging

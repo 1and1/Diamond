@@ -14,13 +14,11 @@ from urllib import urlencode
 
 try:
     from xml.etree import ElementTree
-    ElementTree  # workaround for pyflakes issue #13
 except ImportError:
     ElementTree = None
 
 try:
     from ElementTree import ParseError as ETParseError
-    ETParseError  # workaround for pyflakes issue #13
 except ImportError:
     ETParseError = Exception
 
@@ -50,9 +48,8 @@ class KafkaCollector(diamond.collector.Collector):
         config = super(KafkaCollector, self).get_default_config()
         config.update({
             'host': '127.0.0.1',
-            'port': 7200,
+            'port': 8082,
             'path': 'kafka',
-            'method': 'Threaded',
         })
         return config
 
@@ -91,7 +88,6 @@ class KafkaCollector(diamond.collector.Collector):
         found_beans = set()
 
         for mbean in mbeans.getiterator(tag='MBean'):
-            classname = mbean.get('classname')
             objectname = mbean.get('objectname')
 
             if objectname:
@@ -143,6 +139,9 @@ class KafkaCollector(diamond.collector.Collector):
             value = ptype(attrib.get('value'))
 
             name = '.'.join([key_prefix, attrib.get('name')])
+            # Some prefixes and attributes could have spaces, thus we must
+            # sanitize them
+            name = name.replace(' ', '')
 
             metrics[name] = value
 

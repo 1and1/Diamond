@@ -16,3 +16,5 @@ python-statsd
 pyutmp
 redis
 simplejson
+setproctitle
+psycopg2

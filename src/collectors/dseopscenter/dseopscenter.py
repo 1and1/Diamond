@@ -14,7 +14,6 @@ import datetime
 
 try:
     import json
-    json  # workaround for pyflakes issue #13
 except ImportError:
     import simplejson as json
 
@@ -197,13 +196,13 @@ class DseOpsCenterCollector(diamond.collector.Collector):
                 return None
             self.log.debug('DseOpsCenterCollector result = %s', result)
             for data in result['data'][self.config['node_group']]:
-                if data['data-points'][0][0] is None:
+                if data['data-points'][0][0] is not None:
                     if 'columnfamily' in data:
                         k = '.'.join([data['metric'],
                                       data['columnfamily']])
                         metrics[k] = data['data-points'][0][0]
-                else:
-                    metrics[data['metric']] = data['data-points'][0][0]
+                    else:
+                        metrics[data['metric']] = data['data-points'][0][0]
             self.log.debug('DseOpsCenterCollector metrics = %s', metrics)
             for key in metrics:
                 self.publish(key, metrics[key])
